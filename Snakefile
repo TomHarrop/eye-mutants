@@ -25,10 +25,13 @@ sample_key = 'data/sample_key.csv'
 read_dir = 'data/raw'
 bbduk_ref = '/phix174_ill.ref.fa.gz'
 bbduk_adaptors = '/adapters.fa'
+honeybee_ref = 'data/GCF_003254395.2_Amel_HAv3.1_genomic.fna'
 
 # containers
 bbduk_container = 'shub://TomHarrop/singularity-containers:bbmap_38.00'
-
+freebayes_container = 'shub://TomHarrop/singularity-containers:freebayes_1.2.0'
+bwa_container = 'shub://TomHarrop/singularity-containers:bwa_0.7.17'
+samtools_container = 'shub://TomHarrop/singularity-containers:samtools_1.9'
 
 ########
 # MAIN #
@@ -55,22 +58,145 @@ all_indivs = [csid_to_indiv[x] for x in all_csid]
 
 rule target:
     input:
-        expand('output/010_trim-decon/{indiv}/reads.fq.gz',
-               indiv=all_indivs)
-rule rename:
+        'output/040_freebayes/variants.vcf'
+
+
+# run freebayes
+rule freebayes:
     input:
-        unpack(map_indiv_to_raw_reads)
+        bam = expand('output/030_process-aln/{indiv}_marked.bam',
+                     indiv=all_indivs),
+        bai = expand('output/030_process-aln/{indiv}_marked.bam.bai',
+                     indiv=all_indivs),
+        fa = honeybee_ref
     output:
-        'output/001_test/{indiv}.fq.gz'
+        vcf = 'output/040_freebayes/variants.vcf'
+    params:
+        ploidy = '2'
+    log:
+        'output/logs/040_freebayes/freebayes.log'
+    singularity:
+        freebayes_container
     shell:
-        'cp {input} {output}'
+        'freebayes '
+        # '{params.region} '
+        '--ploidy {params.ploidy} '
+        '-f {input.fa} '
+        '{input.bam} '
+        '> {output} '
+        '2> {log}'
 
 
+# process samfiles
+rule index_bamfile:
+    input:
+        'output/030_process-aln/{indiv}_marked.bam'
+    output:
+        'output/030_process-aln/{indiv}_marked.bam.bai'
+    log:
+        'output/logs/030_process-aln/{indiv}_index.log',
+    threads:
+        2
+    singularity:
+        samtools_container
+    shell:
+        'samtools index -@ {threads} {input} 2> {log}'
+
+
+rule markdup:
+    input:
+        'output/020_bwa/{indiv}.sam'
+    output:
+        sorted = temp('output/030_process-aln/{indiv}_sorted.bam'),
+        marked = 'output/030_process-aln/{indiv}_marked.bam'
+    threads:
+        multiprocessing.cpu_count()
+    log:
+        s = 'output/logs/030_process-aln/{indiv}_sort.log',
+        m = 'output/logs/030_process-aln/{indiv}_markdup.log'
+    singularity:
+        samtools_container
+    shell:
+        'samtools fixmate '
+        '-m '
+        '-O BAM '
+        '-@ {threads} '
+        '{input} '
+        '- '
+        '2> {log.s} '
+        '| '
+        'samtools sort '
+        '-o {output.sorted} '
+        '-O BAM '
+        '-l 0 '
+        '-@ {threads} '
+        '- '
+        '2>> {log.s} '
+        '; '
+        'samtools markdup '
+        '-@ {threads} '
+        '-s '
+        '{output.sorted} '
+        '{output.marked} '
+        '2> {log.m}'
+
+
+# map individuals
+rule bwa:
+    input:
+        fq = 'output/010_trim-decon/{indiv}/{indiv}.fq.gz',
+        index = expand('output/020_bwa/honeybee_ref.fasta.{suffix}',
+                       suffix=['amb', 'ann', 'bwt', 'pac', 'sa'])
+    output:
+        'output/020_bwa/{indiv}.sam'
+    params:
+        prefix = 'output/020_bwa/honeybee_ref.fasta',
+        rg = '\'@RG\\tID:{indiv}\\tSM:{indiv}\''
+    threads:
+        multiprocessing.cpu_count()
+    log:
+        'output/logs/020_bwa/{indiv}.log'
+    singularity:
+        bwa_container
+    shell:
+        'bwa mem '
+        '-t {threads} '
+        '-p '
+        '-R {params.rg} '
+        '{params.prefix} '
+        '{input.fq} '
+        '> {output} '
+        '2> {log}'
+
+
+# prepare ref
+rule index:
+    input:
+        honeybee_ref
+    output:
+        expand('output/020_bwa/honeybee_ref.fasta.{suffix}',
+               suffix=['amb', 'ann', 'bwt', 'pac', 'sa'])
+    params:
+        prefix = 'output/020_bwa/honeybee_ref.fasta'
+    threads:
+        1
+    log:
+        'output/logs/020_bwa/index.log'
+    singularity:
+        bwa_container
+    shell:
+        'bwa index '
+        '-p {params.prefix} '
+        '{input} '
+        '2> {log}'
+
+
+# process reads
 rule trim_decon:
     input:
         unpack(map_indiv_to_raw_reads)
     output:
-        fq = 'output/010_trim-decon/{indiv}/reads.fq.gz',
+        fq = 'output/010_trim-decon/{indiv}/{indiv}.fq.gz',
         f_stats = 'output/010_trim-decon/{indiv}/filter-stats.txt',
         t_stats = 'output/010_trim-decon/{indiv}/trim-stats.txt'
     log:
