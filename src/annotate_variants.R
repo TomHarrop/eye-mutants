@@ -31,7 +31,7 @@ goi_out <- snakemake@output[["goi"]]
 # fa_file <- "data/GCF_003254395.2_Amel_HAv3.1_genomic.fna"
 # goi_file <- "output/050_variant-annotation/dros_genes.csv"
 # coding_file <- "output/050_variant-annotation/coding.Rds"
-# csd_file <-"output/050_variant-annotation/csd.vcf" 
+# csd_file <-"output/050_variant-annotation/csd.vcf"
 # goi_out <- "output/050_variant-annotation/goi.vcf"
 
 
