@@ -5,6 +5,8 @@ import multiprocessing
 import re
 import snakemake
 import os
+import pathlib2
+
 
 #############
 # FUNCTIONS #
@@ -16,6 +18,11 @@ def map_indiv_to_raw_reads(wildcards):
         'r1': os.path.join(read_dir, f'{cs_id}/{cs_id}_R1.fq.gz'),
         'r2': os.path.join(read_dir, f'{cs_id}/{cs_id}_R2.fq.gz')
         })
+
+
+def resolve_path(x):
+    return(str(pathlib2.Path(x).resolve()))
+
 
 ###########
 # GLOBALS #
@@ -32,6 +39,10 @@ bbduk_container = 'shub://TomHarrop/singularity-containers:bbmap_38.00'
 freebayes_container = 'shub://TomHarrop/singularity-containers:freebayes_1.2.0'
 bwa_container = 'shub://TomHarrop/singularity-containers:bwa_0.7.17'
 samtools_container = 'shub://TomHarrop/singularity-containers:samtools_1.9'
+vcflib_container = 'shub://TomHarrop/singularity-containers:vcflib_1.0.0-rc2'
+biopython_container = 'shub://TomHarrop/singularity-containers:biopython_1.73'
+bioconductor_container = 'shub://TomHarrop/singularity-containers:bioconductor_3.9'
+plink_container = 'shub://TomHarrop/singularity-containers:plink_1.90beta5'
 
 ########
 # MAIN #
@@ -43,7 +54,7 @@ with open(sample_key, 'rt') as f:
     csv_reader = csv.reader(f)
     next(csv_reader)
     for row in csv_reader:
-        csid_to_indiv[row[0]] = re.sub("\s", "_", row[1])
+        csid_to_indiv[row[0]] = re.sub('\s', '_', row[1])
 indiv_to_csid = {v: k for k, v in csid_to_indiv.items()}
 
 # find all available csids
@@ -58,10 +69,132 @@ all_indivs = [csid_to_indiv[x] for x in all_csid]
 
 rule target:
     input:
-        'output/040_freebayes/variants.vcf'
+        expand('output/050_variant-annotation/{vcf}_reheadered.vcf',
+               vcf=['csd', 'goi']),
+        expand('output/060_plink/goi.{suffix}',
+               suffix=['map', 'ped', 'assoc'])
+
+
+
+# run association tests
+rule plink_association:
+    input:
+        vcf = 'output/050_variant-annotation/goi.vcf',
+        pheno = 'output/060_plink/pheno.txt'
+    output:
+        expand('output/060_plink/goi.{suffix}',
+               suffix=['map', 'ped', 'assoc'])
+    params:
+        prefix = 'goi',
+        wd = 'output/060_plink',
+        vcf = lambda wildcards,input: resolve_path(input.vcf),
+        pheno = lambda wildcards,input: resolve_path(input.pheno)
+    log:
+        resolve_path('output/logs/060_plink/plink_goi.log')
+    singularity:
+        plink_container
+    shell:
+        'cd {params.wd} || exit 1 ; '
+        'plink --recode '
+        '--vcf {params.vcf} '
+        '--allow-no-sex --allow-extra-chr --1 '
+        '--out {params.prefix} '
+        '--pheno {params.pheno} '
+        '&>> {log} ; '
+        'plink --assoc '
+        '--allow-no-sex --allow-extra-chr --1 '
+        '--out {params.prefix} '
+        '--file {params.prefix} '
+        '--pheno {params.pheno} '
+        '&>> {log}'
+
+rule recode_sample_key:
+    input:
+        key = 'data/sample_key.csv'
+    output:
+        pheno = 'output/060_plink/pheno.txt'
+    log:
+        'output/logs/060_plink/recode_sample_key.log'
+    singularity:
+        bioconductor_container
+    script:
+        'src/recode_sample_key.R'
+
+# run variant annotation
+rule fix_vcf:
+    input:
+        'output/050_variant-annotation/{vcf}.vcf'
+    output:
+        'output/050_variant-annotation/{vcf}_reheadered.vcf'
+    singularity:
+        bbduk_container
+    shell:
+        'grep -v "^##FILTER=All filters passed" {input} > {output}'
+
+
+rule annotate_variants:
+    input:
+        gff = 'data/GCF_003254395.2_Amel_HAv3.1_genomic.gff',
+        vcf = 'output/050_variant-annotation/variants_filtered.vcf.gz',
+        tbi = 'output/050_variant-annotation/variants_filtered.vcf.gz.tbi',
+        fa = 'data/GCF_003254395.2_Amel_HAv3.1_genomic.fna',
+        goi = 'output/050_variant-annotation/dros_genes.csv'
+    output:
+        coding = 'output/050_variant-annotation/coding.Rds',
+        csd = 'output/050_variant-annotation/csd.vcf',
+        goi = 'output/050_variant-annotation/goi.vcf'
+    log:
+        'output/logs/050_variant-annotation/annotate_variants.log'
+    singularity:
+        bioconductor_container
+    script:
+        'src/annotate_variants.R'
+
+rule index_vcf:
+    input:
+        'output/040_freebayes/variants_filtered.vcf'
+    output:
+        gz = 'output/050_variant-annotation/variants_filtered.vcf.gz',
+        tbi = 'output/050_variant-annotation/variants_filtered.vcf.gz.tbi'
+    log:
+        'output/logs/050_variant-annotation/index_vcf.log'
+    singularity:
+        samtools_container
+    shell:
+        'bgzip -c {input} > {output.gz} 2> {log} '
+        '; '
+        'tabix -p vcf {output.gz} 2>> {log}'
+
+# get genes of interest
+rule get_apis_genes:
+    input:
+        'data/dros_eye_genes.txt'
+    output:
+        'output/050_variant-annotation/dros_genes.csv'
+    log:
+        'output/logs/050_variant-annotation/get_apis_genes.log'
+    singularity:
+        biopython_container
+    script:
+        'src/get_apis_genes.py'
 
 
 # run freebayes
+rule filter_vcf:
+    input:
+        'output/040_freebayes/variants.vcf'
+    output:
+        'output/040_freebayes/variants_filtered.vcf'
+    params:
+        filter = 'QUAL > 20'
+    log:
+        'output/logs/040_freebayes/freebayes_filter.log'
+    singularity:
+        vcflib_container
+    shell:
+        'vcffilter -f \'{params.filter}\' {input} > {output} 2> {log}'
+
+
 rule freebayes:
     input:
         bam = expand('output/030_process-aln/{indiv}_marked.bam',
