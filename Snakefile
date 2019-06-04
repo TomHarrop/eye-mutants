@@ -72,7 +72,9 @@ rule target:
         expand('output/050_variant-annotation/{vcf}_reheadered.vcf',
                vcf=['csd', 'goi']),
         expand('output/060_plink/goi.{suffix}',
-               suffix=['map', 'ped', 'assoc'])
+               suffix=['map', 'ped', 'assoc']),
+        expand('output/025_pileup/covstats/{indiv}.txt',
+               indiv=all_indivs)
 
 
 
@@ -273,6 +275,37 @@ rule markdup:
         '{output.marked} '
         '2> {log.m}'
 
+# calculate coverage from bamfiles
+rule pileup:
+    input:
+        sam = 'output/020_bwa/{indiv}.sam',
+        fa = honeybee_ref
+    output:
+        covstats = 'output/025_pileup/covstats/{indiv}.txt',
+        hist = 'output/025_pileup/hist/{indiv}.txt',
+        basecov = 'output/025_pileup/basecov/{indiv}.txt',
+        bincov = 'output/025_pileup/bincov/{indiv}.txt',
+        normcov = 'output/025_pileup/normcov/{indiv}.txt',
+        normcovo = 'output/025_pileup/normcovo/{indiv}.txt',
+    threads:
+        multiprocessing.cpu_count()
+    log:
+        'output/logs/025_pileup/{indiv}.log'
+    singularity:
+        bbduk_container
+    shell:
+        'pileup.sh '
+        'in={input.sam} '
+        'ref={input.fa} '
+        'out={output.covstats} '
+        'hist={output.hist} '
+        'basecov={output.basecov} '
+        'basecov={output.basecov} '
+        'bincov={output.bincov} '
+        'normcov={output.normcov} '
+        'normcovo={output.normcovo} '
+        'secondary=f '
+        '2> {log}'
 
 # map individuals
 rule bwa:
