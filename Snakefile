@@ -279,7 +279,7 @@ rule markdup:
 rule pileup:
     input:
         sam = 'output/020_bwa/{indiv}.sam',
-        fa = honeybee_ref
+        fa = 'output/000_data/Amel_HAv3.1_reheadered.fa'
     output:
         covstats = 'output/025_pileup/covstats/{indiv}.txt',
         hist = 'output/025_pileup/hist/{indiv}.txt',
@@ -305,6 +305,24 @@ rule pileup:
         'normcov={output.normcov} '
         'normcovo={output.normcovo} '
         'secondary=f '
+        '2> {log}'
+
+rule reheader_fasta:
+    input:
+        honeybee_ref
+    output:
+        'output/000_data/Amel_HAv3.1_reheadered.fa'
+    threads:
+        1
+    log:
+        'output/logs/000_data/reheader_fasta.log'
+    singularity:
+        bbduk_container
+    shell:
+        'reformat.sh '
+        'in={input} '
+        'out={output} '
+        'trimreaddescription=t '
         '2> {log}'
 
 # map individuals
