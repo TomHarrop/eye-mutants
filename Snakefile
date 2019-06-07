@@ -43,6 +43,8 @@ vcflib_container = 'shub://TomHarrop/singularity-containers:vcflib_1.0.0-rc2'
 biopython_container = 'shub://TomHarrop/singularity-containers:biopython_1.73'
 bioconductor_container = 'shub://TomHarrop/singularity-containers:bioconductor_3.9'
 plink_container = 'shub://TomHarrop/singularity-containers:plink_1.90beta5'
+pigz_container = 'shub://TomHarrop/singularity-containers:pigz_2.4.0'
+
 
 ########
 # MAIN #
@@ -73,10 +75,49 @@ rule target:
                vcf=['csd', 'goi']),
         expand('output/060_plink/goi.{suffix}',
                suffix=['map', 'ped', 'assoc']),
-        expand('output/025_pileup/covstats/{indiv}.txt',
+        expand('output/025_pileup/basecov/{indiv}.txt.gz',
+               indiv=all_indivs),
+        expand('output/070_regions/{indiv}_consensus.fa',
                indiv=all_indivs)
 
+# extract aa sequences
+rule extract_derived_cds:
+    input:
+        fa = honeybee_ref,
+        regions = 'output/070_regions/regions.txt',
+        vcf = 'output/050_variant-annotation/goi_reheadered.vcf.gz'
+    output:
+        'output/070_regions/{indiv}_consensus.fa'
+    log:
+        'output/logs/070_regions/{indiv}.log'
+    singularity:
+        samtools_container
+    shell:
+        'samtools faidx '
+        '{input.fa} '
+        '$(cat {input.regions}) '
+        '2> {log} '
+        '| '
+        'bcftools consensus '
+        '-s Red1 '
+        '-H 1 '
+        '{input.vcf} '
+        '> {output} '
+        '2>> {log}'
 
+rule extract_goi_cds_regions:
+    input:
+        gff = 'data/GCF_003254395.2_Amel_HAv3.1_genomic.gff',
+        coding = 'output/050_variant-annotation/coding.Rds',
+        assoc = 'output/060_plink/goi.assoc'
+    output:
+        regions = 'output/070_regions/regions.txt'
+    log:
+        'output/logs/070_regions/extract_goi_cds_regions.log'
+    singularity:
+        bioconductor_container
+    script:
+        'src/extract_goi_cds_regions.R'
 
 # run association tests
 rule plink_association:
@@ -137,8 +178,8 @@ rule fix_vcf:
 rule annotate_variants:
     input:
         gff = 'data/GCF_003254395.2_Amel_HAv3.1_genomic.gff',
-        vcf = 'output/050_variant-annotation/variants_filtered.vcf.gz',
-        tbi = 'output/050_variant-annotation/variants_filtered.vcf.gz.tbi',
+        vcf = 'output/040_freebayes/variants_filtered.vcf.gz',
+        tbi = 'output/040_freebayes/variants_filtered.vcf.gz.tbi',
         fa = 'data/GCF_003254395.2_Amel_HAv3.1_genomic.fna',
         goi = 'output/050_variant-annotation/dros_genes.csv'
     output:
@@ -152,20 +193,6 @@ rule annotate_variants:
     script:
         'src/annotate_variants.R'
 
-rule index_vcf:
-    input:
-        'output/040_freebayes/variants_filtered.vcf'
-    output:
-        gz = 'output/050_variant-annotation/variants_filtered.vcf.gz',
-        tbi = 'output/050_variant-annotation/variants_filtered.vcf.gz.tbi'
-    log:
-        'output/logs/050_variant-annotation/index_vcf.log'
-    singularity:
-        samtools_container
-    shell:
-        'bgzip -c {input} > {output.gz} 2> {log} '
-        '; '
-        'tabix -p vcf {output.gz} 2>> {log}'
 
 # get genes of interest
 rule get_apis_genes:
@@ -283,7 +310,7 @@ rule pileup:
     output:
         covstats = 'output/025_pileup/covstats/{indiv}.txt',
         hist = 'output/025_pileup/hist/{indiv}.txt',
-        basecov = 'output/025_pileup/basecov/{indiv}.txt',
+        basecov = temp('output/025_pileup/basecov/{indiv}.txt'),
         bincov = 'output/025_pileup/bincov/{indiv}.txt',
         normcov = 'output/025_pileup/normcov/{indiv}.txt',
         normcovo = 'output/025_pileup/normcovo/{indiv}.txt',
@@ -299,7 +326,6 @@ rule pileup:
         'ref={input.fa} '
         'out={output.covstats} '
         'hist={output.hist} '
-        'basecov={output.basecov} '
         'basecov={output.basecov} '
         'bincov={output.bincov} '
         'normcov={output.normcov} '
@@ -427,3 +453,37 @@ rule trim_decon:
         'in=stdin.fastq '
         'out={output.fq} '
         '2> {log.repair2} '
+
+# generic compression rule
+rule compress:
+    input:
+        '{folder}/{file}.{ext}'
+    output:
+        '{folder}/{file}.{ext}.gz'
+    wildcard_constraints:
+        ext = '(?!vcf)'     # not vcf
+    singularity:
+        pigz_container
+    shell:
+        'pigz '
+        '--best '
+        '--keep '
+        '--stdout '
+        '{input} '
+        '> {output}'
+
+# generic index rule
+rule index_vcf:
+    input:
+        'output/{folder}/{file}.vcf'
+    output:
+        gz = 'output/{folder}/{file}.vcf.gz',
+        tbi = 'output/{folder}/{file}.vcf.gz.tbi'
+    log:
+        'output/logs/{folder}/{file}_index-vcf.log'
+    singularity:
+        samtools_container
+    shell:
+        'bgzip -c {input} > {output.gz} 2> {log} '
+        '; '
+        'tabix -p vcf {output.gz} 2>> {log}'

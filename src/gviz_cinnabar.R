@@ -96,7 +96,7 @@ displayPars(cn_cdsat) <- cds_scheme
 
 # sequence track
 fasta_file <- "data/GCF_003254395.2_Amel_HAv3.1_genomic.fna"
-fa <- readDNAStringSet(fasta_file)
+fa <- Biostrings::readDNAStringSet(fasta_file)
 names(fa) <- gsub("^([^[:space:]]+).*", "\\1", names(fa)) 
 st <- SequenceTrack(fa, chromosome = cn_chr)
 

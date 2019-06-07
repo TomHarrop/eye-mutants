@@ -2,6 +2,7 @@ library(SNPRelate)
 library(data.table)
 
 vcf_file <- "output/050_variant-annotation/csd_reheadered.vcf"
+vcf_file <- "test/csd_hets_reheadered.vcf"
 gds_file <- tempfile(fileext = ".gds")
 
 # make a gds dataset
@@ -39,7 +40,8 @@ ibs_pd[, i2 := factor(i2, levels = indiv_order)]
 label_types <- gsub("[[:digit:]]+", "", indiv_order)
 label_cols <- plyr::mapvalues(label_types,
                               from = unique(label_types),
-                              to = RColorBrewer::brewer.pal(length(unique(label_types)), "Set1"))
+                              to = viridis::viridis_pal(option = "D")
+                              (length(unique(label_types))))
 
 # plot heatmap of similarity
 library(ggplot2)
@@ -55,5 +57,6 @@ gp <- ggplot(ibs_pd, aes(x = i1, y = i2, fill = value)) +
                          limits = c(0,1)) +
     geom_raster()
 
+gp
 ggsave("test.pdf",gp, width = 210 - 20, height = 210 - 20, units = "mm")
 
