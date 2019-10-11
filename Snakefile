@@ -77,17 +77,50 @@ rule target:
                suffix=['map', 'ped', 'assoc']),
         expand('output/025_pileup/basecov/{indiv}.txt.gz',
                indiv=all_indivs),
-        expand('output/070_regions/{indiv}_consensus.fa',
-               indiv=all_indivs)
+        'output/070_regions/all_indivs_aa.fa'
 
 # extract aa sequences
+rule translate_cds:
+    input:
+        'output/070_regions/all_indivs_consensus.fa'
+    output:
+        'output/070_regions/all_indivs_aa.fa'
+    singularity:
+        biopython_container
+    script:
+        'src/translate_consensus.py'
+
+rule combine_cds:
+    input:
+        expand('output/070_regions/{indiv}_consensus_condensed.fa',
+               indiv=all_indivs)
+    output:
+        temp('output/070_regions/all_indivs_consensus.fa')
+    singularity:
+        samtools_container
+    shell:
+        'cat {input} > {output}'
+
+rule condense_cds:
+    input:
+        'output/070_regions/{indiv}_consensus.fa'
+    output:
+        temp('output/070_regions/{indiv}_consensus_condensed.fa')
+    params:
+        header = '>{indiv}'
+    singularity:
+        samtools_container
+    shell:
+        'echo "{params.header}" > {output} ; '
+        'grep -v "^>" {input} >> {output}'
+
 rule extract_derived_cds:
     input:
         fa = honeybee_ref,
         regions = 'output/070_regions/regions.txt',
         vcf = 'output/050_variant-annotation/goi_reheadered.vcf.gz'
     output:
-        'output/070_regions/{indiv}_consensus.fa'
+        temp('output/070_regions/{indiv}_consensus.fa')
     log:
         'output/logs/070_regions/{indiv}.log'
     singularity:
@@ -99,7 +132,7 @@ rule extract_derived_cds:
         '2> {log} '
         '| '
         'bcftools consensus '
-        '-s Red1 '
+        '-s {wildcards.indiv} '
         '-H 1 '
         '{input.vcf} '
         '> {output} '

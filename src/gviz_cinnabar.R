@@ -1,4 +1,5 @@
 library(Gviz)
+library(GenomicRanges)
 
 options(ucscChromosomeNames=FALSE)
 
